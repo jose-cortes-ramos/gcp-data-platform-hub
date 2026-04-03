@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+
+# Docker & DB
+.docker-data/
+postgres_data/
+
+# Environment
+.env
+#.env.example (Ejemplo a dejar configurado)
+
+# Documentos Públicos (Portfolio en Inglés)
+docs/*
+!docs/ARCHITECTURE_DECISIONS_EN.md
+!docs/DATA_PIPELINE_FLOW_EN.md
+!docs/OPERATIONS_GUIDE_EN.md
+!adr/
+!architecture/
+
+# macOS
+.DS_Store
