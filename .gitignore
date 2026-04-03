@@ -22,5 +22,21 @@ docs/*
 !adr/
 !architecture/
 
+# --- Terraform ---
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+backend.conf
+override.tf
+override.tf.json
+
+# --- GCP (Service Account Keys) ---
+# Ignoramos TODOS los JSON por seguridad, ya que las llaves de GCP son archivos .json
+*.json
+# Excepción: permitimos los JSON de docs si fueran necesarios
+!docs/**/*.json
+
 # macOS
 .DS_Store
