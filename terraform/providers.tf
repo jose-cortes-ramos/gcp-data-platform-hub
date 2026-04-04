@@ -10,6 +10,7 @@ terraform {
 }
 
 provider "google" {
+  credentials = file("credentials.json") # las credenciales que vienen de GCP JSON
   project = var.project_id
   region  = var.region
   zone    = var.zone

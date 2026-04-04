@@ -35,8 +35,6 @@ override.tf.json
 # --- GCP (Service Account Keys) ---
 # Ignoramos TODOS los JSON por seguridad, ya que las llaves de GCP son archivos .json
 *.json
-# Excepción: permitimos los JSON de docs si fueran necesarios
-!docs/**/*.json
 
 # macOS
 .DS_Store
