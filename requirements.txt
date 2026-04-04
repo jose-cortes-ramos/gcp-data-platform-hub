@@ -1,0 +1,6 @@
+pydantic>=2.0.0
+black
+flake8
+pytest
+google-cloud-storage
+google-cloud-bigquery
