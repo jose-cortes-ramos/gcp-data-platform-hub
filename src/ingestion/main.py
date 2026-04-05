@@ -57,12 +57,17 @@ def gcs_to_bigquery_ingest(event, context):
                     item['extracted_at'] = datetime.utcnow().isoformat()
                 
                 asset = CryptoAsset(**item)
-                # Convert back to dict for BigQuery (Serializing Decimal to string/float)
-                record = asset.dict()
-                # BigQuery expects Decimal as string or specific format for Numeric
-                record['current_price'] = str(record['current_price'])
-                if record['market_cap']: record['market_cap'] = str(record['market_cap'])
-                if record['total_volume']: record['total_volume'] = str(record['total_volume'])
+                
+                # Manual serialization for BigQuery compatibility
+                record = {
+                    "id": asset.id,
+                    "symbol": asset.symbol,
+                    "name": asset.name,
+                    "current_price": str(asset.current_price),
+                    "market_cap": str(asset.market_cap) if asset.market_cap else None,
+                    "total_volume": str(asset.total_volume) if asset.total_volume else None,
+                    "extracted_at": asset.extracted_at.isoformat()
+                }
                 
                 validated_records.append(record)
             except ValidationError as ve:
