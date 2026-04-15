@@ -1,12 +1,10 @@
 import os
 import json
 import logging
-from decimal import Decimal
 from datetime import datetime
-from google.cloud import bigquery
-from google.cloud import storage
+from google.cloud import bigquery, storage
 from pydantic import ValidationError
-from schemas import CryptoAsset
+from schemas import CryptoHistoricalRaw
 
 # Configure Logging for Cloud Logging (JSON compatible)
 logging.basicConfig(level=logging.INFO)
@@ -18,22 +16,22 @@ storage_client = storage.Client()
 
 # Environment Variables (to be set in Terraform)
 PROJECT_ID = os.getenv("GCP_PROJECT_ID")
-DATASET_ID = "raw_data_bronze"  # Bronze Layer
-TABLE_ID = "crypto_prices_raw"
+DATASET_ID = "raw_data_bronze"
+TABLE_ID = "historical_raw"
 
 def gcs_to_bigquery_ingest(event, context):
     """
-    Cloud Function triggered by a GCS object creation.
-    Processes the incoming JSON file, validates it with Pydantic,
-    and loads it into BigQuery Bronze dataset.
+    Cloud Function triggered by a GCS object creation in the historical folder.
+    Processes historical JSON files, flattens them, and loads into BigQuery.
     """
     bucket_name = event['bucket']
     file_name = event['name']
 
-    logger.info(f"Processing file {file_name} from bucket {bucket_name}")
+    logger.info(f"Processing historical file {file_name} from bucket {bucket_name}")
 
-    if not file_name.endswith('.json'):
-        logger.warning(f"Skipping non-JSON file: {file_name}")
+    # Exclude files not in the historical folder
+    if 'historical/' not in file_name or not file_name.endswith('.json'):
+        logger.info(f"Skipping non-historical or non-json file: {file_name}")
         return
 
     try:
@@ -43,69 +41,47 @@ def gcs_to_bigquery_ingest(event, context):
         data_str = blob.download_as_text()
         raw_data = json.loads(data_str)
 
-        # 2. Validation with Pydantic (Schema-on-read)
-        validated_records = []
-        
-        # Handle both single objects and lists
-        if isinstance(raw_data, dict):
-            raw_data = [raw_data]
-            
-        for item in raw_data:
-            try:
-                # Add extraction timestamp if missing
-                if 'extracted_at' not in item:
-                    item['extracted_at'] = datetime.utcnow().isoformat()
-                
-                asset = CryptoAsset(**item)
-                
-                # Manual serialization for BigQuery compatibility
-                record = {
-                    "id": asset.id,
-                    "symbol": asset.symbol,
-                    "name": asset.name,
-                    "current_price": str(asset.current_price),
-                    "market_cap": str(asset.market_cap) if asset.market_cap else None,
-                    "total_volume": str(asset.total_volume) if asset.total_volume else None,
-                    "extracted_at": asset.extracted_at.isoformat()
-                }
-                
-                validated_records.append(record)
-            except ValidationError as ve:
-                logger.error(f"Validation error for record in {file_name}: {ve.json()}")
-                continue
+        # 2. Extract coin_id from filename (e.g., historical/bitcoin_20260414.json)
+        base_name = os.path.basename(file_name)
+        coin_id = base_name.split('_')[0]
 
-        if not validated_records:
-            logger.error(f"No valid records found in {file_name}")
+        # 3. Validation with Pydantic
+        try:
+            historical_data = CryptoHistoricalRaw(**raw_data)
+        except ValidationError as ve:
+            logger.error(f"Validation error for {file_name}: {ve.json()}")
             return
 
-        # 3. Load into BigQuery Bronze (Load Job)
+        # 4. Flattening hierarchical arrays to flat records
+        validated_records = []
+        # Prices, Market Caps and Volumes are synced by index from CoinGecko
+        for i in range(len(historical_data.prices)):
+            ts_ms, price = historical_data.prices[i]
+            _, m_cap = historical_data.market_caps[i]
+            _, volume = historical_data.total_volumes[i]
+            
+            record = {
+                "id": coin_id,
+                "ds": datetime.utcfromtimestamp(ts_ms / 1000.0).isoformat(),
+                "price": float(price),
+                "market_cap": float(m_cap),
+                "total_volume": float(volume)
+            }
+            validated_records.append(record)
+
+        if not validated_records:
+            logger.error(f"No records found after flattening for {file_name}")
+            return
+
+        # 5. Load into BigQuery (JSON Streaming Insert for small batches)
         table_ref = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
         
-        job_config = bigquery.LoadJobConfig(
-            schema=[
-                bigquery.SchemaField("id", "STRING"),
-                bigquery.SchemaField("symbol", "STRING"),
-                bigquery.SchemaField("name", "STRING"),
-                bigquery.SchemaField("current_price", "NUMERIC"),
-                bigquery.SchemaField("market_cap", "NUMERIC"),
-                bigquery.SchemaField("total_volume", "NUMERIC"),
-                bigquery.SchemaField("extracted_at", "TIMESTAMP"),
-            ],
-            write_disposition="WRITE_APPEND", # Senior Tip: Append for Bronze Layer
-            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-        )
-
-        # Convert list of dicts to newline delimited JSON for the load job
-        json_data = "\n".join([json.dumps(record, default=str) for record in validated_records])
+        errors = bq_client.insert_rows_json(table_ref, validated_records)
         
-        load_job = bq_client.load_table_from_json(
-            validated_records, 
-            table_ref, 
-            job_config=job_config
-        )
-        
-        load_job.result()  # Wait for the job to complete
-        logger.info(f"Successfully loaded {len(validated_records)} records to {table_ref}")
+        if errors == []:
+            logger.info(f"Successfully loaded {len(validated_records)} records for {coin_id} into {table_ref}")
+        else:
+            logger.error(f"Encountered errors while inserting rows: {errors}")
 
     except Exception as e:
         logger.error(f"Error processing {file_name}: {str(e)}")

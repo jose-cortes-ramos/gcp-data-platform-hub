@@ -30,3 +30,12 @@ class CryptoAsset(BaseModel):
         json_encoders = {
             Decimal: lambda v: float(v)  # For JSON compatibility if needed
         }
+
+class CryptoHistoricalRaw(BaseModel):
+    """
+    Schema for validating historical time-series data from CoinGecko.
+    Structure: {"prices": [[ts, val], ...], "market_caps": [...], "total_volumes": [...]}
+    """
+    prices: list[list[float]] = Field(..., description="Array of [timestamp, price] pairs")
+    market_caps: list[list[float]] = Field(..., description="Array of [timestamp, market_cap] pairs")
+    total_volumes: list[list[float]] = Field(..., description="Array of [timestamp, total_volume] pairs")
